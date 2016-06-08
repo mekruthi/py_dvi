@@ -9,11 +9,12 @@ import utils
 
 class ParallelDiscreteValueIteration(object):
 
-    def __init__(self, mdp, num_processes, max_iterations, min_residual):
+    def __init__(self, mdp, num_processes, max_iterations, min_residual, verbose):
         self.mdp = mdp
         self.num_processes = num_processes
         self.max_iterations = max_iterations
         self.min_residual = min_residual
+        self.verbose = verbose
         self.segmented_state_idxs = utils.segment_state_indices(self.mdp.num_states, self.num_processes)
         self.init_value_arrays()
         
@@ -23,12 +24,12 @@ class ParallelDiscreteValueIteration(object):
         self.qvalues = mp.Array('f', self.mdp.num_states * self.mdp.num_actions, lock=False)
         
     def solve(self):
-        # create the pool of processes
-        pool = mp.Pool(self.num_processes)
-
         # loop max iterations time performing a complete state-action pair update
         for idx in xrange(self.max_iterations):
-            residual = self.solve_step(pool)
+            residual = self.solve_step()
+
+            if self.verbose == 1:
+                print 'iteration: {}\tresidual: {}'.format(idx, residual)
 
             # break once converged
             if residual < self.min_residual:
@@ -38,7 +39,7 @@ class ParallelDiscreteValueIteration(object):
         qvalues = np.array(self.qvalues).reshape(self.mdp.num_states, self.mdp.num_actions)
         return qvalues
 
-    def solve_step(self, pool):
+    def solve_step(self):
         # loop over chunks of the state space updating the value arrays
         processes = []
         queue = mp.Queue()
@@ -75,7 +76,7 @@ class ParallelDiscreteValueIteration(object):
                 new_value = state_action_reward
 
                 # if we haven't reached a terminal state then also consider values of next states
-                if len(next_state_idxs) > 0:
+                if next_state_idxs:
                     for idx, next_state_idx in enumerate(next_state_idxs):
                         new_value += state_values[next_state_idx] * probs[idx] * mdp.discount
 
@@ -86,12 +87,13 @@ class ParallelDiscreteValueIteration(object):
                 # if this is the first action then set value to be for that action
                 if action_idx == 0:
                     state_values[state_idx] = new_value
-                else:
-                    state_values[state_idx] = max(state_values[state_idx], new_value)
+                elif new_value > state_values[state_idx]:
+                    state_values[state_idx] = new_value
 
             # calculate and return residual
             cur_residual = abs(state_values[state_idx] - original_state_value)
-            max_residual = max(cur_residual, max_residual)
+            if cur_residual > max_residual:
+                max_residual = cur_residual
 
         # insert max residual into queue for retrieve by solve_step
         queue.put(max_residual)

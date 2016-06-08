@@ -29,9 +29,9 @@ class LineMDP(object):
 
         # terminal
         if state == self.length:
-            next_states, probs = np.array([]), np.array([])
+            next_states, probs = [], []
         else:
-            next_states, probs = np.array([max(0, state + action)]), np.array([1])
+            next_states, probs = [max(0, state + action)], [1]
 
         return next_states, probs
 
