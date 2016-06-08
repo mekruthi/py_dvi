@@ -36,7 +36,7 @@ class ParallelDiscreteValueIteration(object):
                 break
 
         # return the qvalues
-        qvalues = np.array(self.qvalues).reshape(self.mdp.num_states, self.mdp.num_actions)
+        qvalues = np.frombuffer(self.qvalues, dtype='float32').reshape(self.mdp.num_states, self.mdp.num_actions)
         return qvalues
 
     def solve_step(self):
@@ -90,7 +90,7 @@ class ParallelDiscreteValueIteration(object):
                 elif new_value > state_values[state_idx]:
                     state_values[state_idx] = new_value
 
-            # calculate and return residual
+            # update residual
             cur_residual = abs(state_values[state_idx] - original_state_value)
             if cur_residual > max_residual:
                 max_residual = cur_residual
