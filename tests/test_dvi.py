@@ -14,7 +14,7 @@ class TestParallelDiscreteValueIteration(unittest.TestCase):
 
     def test_init(self):
         mdp = mdps.LineMDP(length=1001)
-        num_processes = 1
+        num_processes = 2
         max_iterations = 1002
         min_residual = 1e-4
         solver = dvi.ParallelDiscreteValueIteration(mdp, num_processes, max_iterations, min_residual)

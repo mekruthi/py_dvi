@@ -2,6 +2,7 @@
 Parallel implementation of value iteration.
 """
 
+import multiprocessing as mp
 import numpy as np
 
 import utils
@@ -18,63 +19,79 @@ class ParallelDiscreteValueIteration(object):
         
     def init_value_arrays(self):
         # allocate the state value and state-action value arrays
-        self.state_values = np.zeros((self.mdp.num_states))
-        self.qvalues = np.zeros((self.mdp.num_states, self.mdp.num_actions))
+        self.state_values = mp.Array('f', self.mdp.num_states, lock=False)
+        self.qvalues = mp.Array('f', self.mdp.num_states * self.mdp.num_actions, lock=False)
         
     def solve(self):
+        # create the pool of processes
+        pool = mp.Pool(self.num_processes)
+
         # loop max iterations time performing a complete state-action pair update
         for idx in xrange(self.max_iterations):
-            residual = self.solve_step()
+            residual = self.solve_step(pool)
 
             # break once converged
             if residual < self.min_residual:
                 break
 
         # return the qvalues
-        return self.qvalues
+        qvalues = np.array(self.qvalues).reshape(self.mdp.num_states, self.mdp.num_actions)
+        return qvalues
 
-    def solve_step(self):
+    def solve_step(self, pool):
         # loop over chunks of the state space updating the value arrays
-        max_residual = 0
+        processes = []
+        queue = mp.Queue()
         for state_idxs in self.segmented_state_idxs:
-            cur_residual = self.solve_chunk(state_idxs)
-            max_residual = max(max_residual, cur_residual)
+            p = mp.Process(target=self.solve_chunk, args=(self.mdp, self.state_values, self.qvalues, state_idxs, queue))
+            p.start()
+            processes.append(p)
+
+        # retrieve max residual value across processes
+        max_residual = 0
+        for p in processes:
+            max_residual = max(queue.get(), max_residual)
+            p.join()
+
         return max_residual
 
-    def solve_chunk(self, state_idxs):
+    @staticmethod
+    def solve_chunk(mdp, state_values, qvalues, state_idxs, queue):
+
         # loops over states and actions updating value arrays
         max_residual = 0
         for state_idx in state_idxs:
 
             # track original value for residual computation
-            original_state_value = self.state_values[state_idx]
+            original_state_value = state_values[state_idx]
 
-            for action_idx in xrange(self.mdp.num_actions):
+            for action_idx in xrange(mdp.num_actions):
 
                 # get the next states and their probs
-                next_state_idxs, probs = self.mdp.next_states_probs(state_idx, action_idx)
+                next_state_idxs, probs = mdp.next_states_probs(state_idx, action_idx)
 
                 # always account for the reward for taking the action in this state
-                state_action_reward = self.mdp.reward(state_idx, action_idx)
+                state_action_reward = mdp.reward(state_idx, action_idx)
                 new_value = state_action_reward
 
                 # if we haven't reached a terminal state then also consider values of next states
                 if len(next_state_idxs) > 0:
-                    next_values = self.state_values[next_state_idxs] * probs * self.mdp.discount
-                    new_value += np.sum(next_values)
+                    for idx, next_state_idx in enumerate(next_state_idxs):
+                        new_value += state_values[next_state_idx] * probs[idx] * mdp.discount
 
                 # update the qvalues
-                self.qvalues[state_idx, action_idx] = new_value
+                qvalues[state_idx * mdp.num_actions + action_idx] = new_value
 
                 # update the state values
                 # if this is the first action then set value to be for that action
                 if action_idx == 0:
-                    self.state_values[state_idx] = new_value
+                    state_values[state_idx] = new_value
                 else:
-                    self.state_values[state_idx] = max(self.state_values[state_idx], new_value)
+                    state_values[state_idx] = max(state_values[state_idx], new_value)
 
             # calculate and return residual
-            cur_residual = abs(self.state_values[state_idx] - original_state_value)
+            cur_residual = abs(state_values[state_idx] - original_state_value)
             max_residual = max(cur_residual, max_residual)
 
-        return max_residual
+        # insert max residual into queue for retrieve by solve_step
+        queue.put(max_residual)
